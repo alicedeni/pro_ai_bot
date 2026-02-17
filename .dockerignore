@@ -1,0 +1,16 @@
+.env
+venv/
+__pycache__/
+*.pyc
+.git
+.gitignore
+*.md
+.DS_Store
+.idea/
+.vscode/
+user_data.json
+raffle_numbers.json
+raffle_table.txt
+raffle_table.csv
+help_requests.json
+exported_data.csv
