@@ -85,6 +85,39 @@ else:
     raffle_numbers = {}
     next_raffle_number = 1
 
+
+def restore_user_states():
+    """Восстанавливает состояния пользователей из сохранённых данных после перезапуска бота"""
+    for user_id_str, data in user_data.items():
+        user_id = int(user_id_str)
+        
+        # Пропускаем, если квест завершён
+        if data.get("raffle_number"):
+            user_states[user_id] = {
+                "stage": "completed",
+                "current_question": len(QUESTIONS),
+                "answers": data.get("answers", {}),
+                "raffle_number": data.get("raffle_number")
+            }
+            continue
+        
+        # Если пользователь начал квест (есть started_at)
+        if data.get("started_at"):
+            answers = data.get("answers", {})
+            current_question_index = len(answers)
+            
+            # Если все вопросы отвечены, но квест не завершён - завершаем
+            if current_question_index >= len(QUESTIONS):
+                continue
+            
+            # Восстанавливаем состояние: пользователь ждёт ответа на текущий вопрос
+            user_states[user_id] = {
+                "stage": "answering",
+                "current_question": current_question_index,
+                "answers": answers
+            }
+
+
 # Определение заданий
 QUESTIONS = [
     {
@@ -157,6 +190,9 @@ QUESTIONS = [
         "keywords": [],
     },
 ]
+
+# Восстанавливаем состояния пользователей после загрузки данных и определения заданий
+restore_user_states()
 
 
 def escape_markdown_v2(text: str) -> str:
@@ -570,13 +606,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений"""
     user_id = update.effective_user.id
     message_text = update.message.text
+    user_id_str = str(user_id)
     
-    # Проверяем, есть ли состояние у пользователя
+    # Если пользователя нет в user_states, но он есть в user_data и начал квест - восстанавливаем состояние
     if user_id not in user_states:
-        await update.message.reply_text(
-            "Для начала работы с ботом используйте команду /start"
-        )
-        return
+        if user_id_str in user_data and user_data[user_id_str].get("started_at"):
+            # Восстанавливаем состояние из сохранённых данных
+            data = user_data[user_id_str]
+            if not data.get("raffle_number"):  # Квест не завершён
+                answers = data.get("answers", {})
+                current_question_index = len(answers)
+                
+                if current_question_index < len(QUESTIONS):
+                    user_states[user_id] = {
+                        "stage": "answering",
+                        "current_question": current_question_index,
+                        "answers": answers
+                    }
+                    # Показываем текущий вопрос пользователю
+                    question = QUESTIONS[current_question_index]
+                    await update.message.reply_text(
+                        f"Продолжаем квест!\n\n{question['text']}",
+                        parse_mode="Markdown"
+                    )
+                    return
+            else:
+                # Квест завершён
+                user_states[user_id] = {
+                    "stage": "completed",
+                    "current_question": len(QUESTIONS),
+                    "answers": data.get("answers", {}),
+                    "raffle_number": data.get("raffle_number")
+                }
+        else:
+            await update.message.reply_text(
+                "Для начала работы с ботом используйте команду /start"
+            )
+            return
     
     state = user_states[user_id]
     
