@@ -44,6 +44,7 @@ user_states = {}
 DATA_FILE = Path("user_data.json")
 RAFFLE_NUMBERS_FILE = Path("raffle_numbers.json")
 HELP_REQUESTS_FILE = Path("help_requests.json")
+QUEST_FINISHED_FILE = Path("quest_finished.json")
 
 # Пути к изображениям
 IMAGES_DIR = Path("images")
@@ -84,6 +85,20 @@ if RAFFLE_NUMBERS_FILE.exists():
 else:
     raffle_numbers = {}
     next_raffle_number = 1
+
+# Загружаем флаг завершения квеста
+if QUEST_FINISHED_FILE.exists():
+    with open(QUEST_FINISHED_FILE, "r", encoding="utf-8") as f:
+        quest_finished_data = json.load(f)
+        quest_finished = quest_finished_data.get("finished", False)
+else:
+    quest_finished = False
+
+
+def save_quest_finished():
+    """Сохраняет флаг завершения квеста"""
+    with open(QUEST_FINISHED_FILE, "w", encoding="utf-8") as f:
+        json.dump({"finished": quest_finished}, f, ensure_ascii=False, indent=2)
 
 
 def restore_user_states():
@@ -411,6 +426,12 @@ def check_emoji_answer(text_lower: str) -> tuple[bool, list[str]]:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
+    global quest_finished
+    
+    if quest_finished:
+        await update.message.reply_text("Квест завершен, спасибо за участие!")
+        return
+    
     user = update.effective_user
     username = user.first_name if user.first_name else user.username
     user_id = user.id
@@ -510,8 +531,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def join_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик кнопки 'Присоединиться'"""
+    global quest_finished
+    
     query = update.callback_query
     await query.answer()
+    
+    if quest_finished:
+        await query.message.reply_text("Квест завершен, спасибо за участие!")
+        return
     
     user_id = query.from_user.id
     
@@ -546,8 +573,14 @@ async def join_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_quest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало квеста - показываем первое задание"""
+    global quest_finished
+    
     query = update.callback_query
     await query.answer()
+    
+    if quest_finished:
+        await query.message.reply_text("Квест завершен, спасибо за участие!")
+        return
     
     user_id = query.from_user.id
     
@@ -604,9 +637,22 @@ async def show_question(query, user_id: int, question_index: int):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений"""
+    global quest_finished
+    
     user_id = update.effective_user.id
     message_text = update.message.text
     user_id_str = str(user_id)
+    
+    # Если квест завершён - отправляем сообщение (кроме команды /export для админа)
+    if quest_finished:
+        # Проверяем, админ ли это (для /export)
+        username = (update.effective_user.username or "").lower()
+        is_admin_by_id = ADMIN_CHAT_IDS and str(user_id) in ADMIN_CHAT_IDS
+        is_admin_by_username = ADMIN_USERNAMES and username in ADMIN_USERNAMES
+        
+        if not (is_admin_by_id or is_admin_by_username):
+            await update.message.reply_text("Квест завершен, спасибо за участие!")
+            return
     
     # Если пользователя нет в user_states, но он есть в user_data и начал квест - восстанавливаем состояние
     if user_id not in user_states:
@@ -829,6 +875,32 @@ async def complete_quest(update: Update, user_id: int):
     )
 
 
+async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для завершения квеста (только для организаторов)"""
+    global quest_finished
+    
+    user_id = update.effective_user.id
+    username = (update.effective_user.username or "").lower()
+
+    # Проверяем: админ по ID или по нику
+    is_admin_by_id = ADMIN_CHAT_IDS and str(user_id) in ADMIN_CHAT_IDS
+    is_admin_by_username = ADMIN_USERNAMES and username in ADMIN_USERNAMES
+
+    if not (is_admin_by_id or is_admin_by_username):
+        await update.message.reply_text(
+            "Доступ запрещен\\. Эта команда доступна только организаторам\\.",
+            parse_mode="MarkdownV2"
+        )
+        return
+    
+    quest_finished = True
+    save_quest_finished()
+    await update.message.reply_text(
+        "*Квест завершён\\. Приём ответов остановлен\\.*",
+        parse_mode="MarkdownV2"
+    )
+
+
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для получения выгрузки участников (только для организаторов)"""
     user_id = update.effective_user.id
@@ -918,6 +990,7 @@ def main():
     
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("finish", finish_command))
     application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CallbackQueryHandler(join_quest, pattern="^join_quest$"))
     application.add_handler(CallbackQueryHandler(start_quest, pattern="^start_quest$"))
